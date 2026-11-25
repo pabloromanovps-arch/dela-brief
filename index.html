@@ -366,60 +366,55 @@ textarea { min-height: 120px; resize: vertical; line-height: 1.45; }
         <div class="d-meta">${meta}</div>
       </header>
       ${secs}
-      <section class="d-sec"><div class="d-band d-band--acc"><span class="d-num">✓</span><span class="d-st">Что уточнить у клиента</span></div>${gaps}</section>
+      <section class="d-sec"><div class="d-band d-band--acc"><span class="d-num">✓</span><span class="d-st">${esc(m.gapsTitle || "Что уточнить у клиента")}</span></div>${gaps}</section>
       <footer class="d-foot">${esc(m.footer)}</footer>
     </article>`;
   }
 
   // ---------- Word (.docx) через библиотеку docx (глобальный window.docx)
+  // Линейная вёрстка без таблиц: телефонные просмотрщики Word ломают таблицы,
+  // а абзацы читаются одинаково на телефоне и компьютере.
   async function docx(m) {
     const D = window.docx; if (!D) throw new Error("docx library not loaded");
-    const { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, WidthType, ShadingType, BorderStyle, AlignmentType } = D;
+    const { Document, Packer, Paragraph, TextRun, ShadingType, BorderStyle } = D;
     const F = "Arial";
-    const run = (text, o = {}) => new TextRun({ text: String(text ?? ""), font: F, size: o.size || 20, bold: o.bold, italics: o.italics, color: o.color || INK });
-    const p = (runs, o = {}) => new Paragraph({ children: Array.isArray(runs) ? runs : [runs], spacing: { before: o.before || 0, after: o.after ?? 60 }, alignment: o.align });
-    const nb = { style: BorderStyle.NONE, size: 0, color: "FFFFFF" };
-    const line = { style: BorderStyle.SINGLE, size: 4, color: LINE };
-    const borders = (b) => ({ top: b, bottom: b, left: b, right: b });
-    const tcell = (children, o = {}) => new TableCell({ children, width: o.dxa ? { size: o.dxa, type: WidthType.DXA } : o.w ? { size: o.w, type: WidthType.PERCENTAGE } : undefined,
+    const run = (text, o = {}) => new TextRun({ text: String(text ?? ""), font: F, size: o.size || 22, bold: o.bold, italics: o.italics, color: o.color || INK });
+    const p = (runs, o = {}) => new Paragraph({ children: Array.isArray(runs) ? runs : [runs],
+      spacing: { before: o.before || 0, after: o.after ?? 80, line: o.line || 300 }, keepNext: o.keepNext,
       shading: o.fill ? { type: ShadingType.CLEAR, color: "auto", fill: o.fill } : undefined,
-      margins: { top: 90, bottom: 90, left: 140, right: 140 }, borders: borders(o.border || line), columnSpan: o.span });
+      border: o.rule ? { bottom: { style: BorderStyle.SINGLE, size: 4, color: LINE, space: 6 } } : undefined,
+      indent: o.indent ? { left: o.indent } : undefined });
 
     const answer = (r) => {
-      if (r.kind === "missing") return [p(run("не заполнено", { color: ACC, italics: true }))];
-      if (r.kind === "choice") return [p(r.value.flatMap((v, i) => [run((i ? "    " : "") + "☒ ", { color: ACC }), run(v)]))];
+      if (r.kind === "missing") return [p(run("не заполнено", { color: ACC, italics: true }), { rule: true, after: 160 })];
+      if (r.kind === "choice") return r.value.map((v, i) => p([run("☒  ", { color: ACC }), run(v)], { after: i === r.value.length - 1 ? 160 : 40, rule: i === r.value.length - 1 }));
       if (r.kind === "table") {
-        const t = new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [
-          new TableRow({ tableHeader: true, children: r.columns.map((c) => tcell([p(run(c, { bold: true, size: 17, color: MUTED }))], { fill: PAPER })) }),
-          ...r.rows.map((row) => new TableRow({ children: row.map((v) => tcell([p(run(v || "—", { size: 18 }))])) }))] });
-        return [t, ...(r.note ? [p(run(r.note, { size: 18, italics: true }), { before: 80 })] : [p(run(""), { after: 0 })])];
+        const out = r.rows.map((row) => p(row.flatMap((v, i) => [
+          run((i ? "   ·   " : "•  ") + r.columns[i] + ": ", { color: MUTED, size: 20 }), run(v || "—", { size: 22 })]), { after: 60, indent: 0 }));
+        if (r.note) out.push(p(run(r.note, { italics: true }), { after: 60 }));
+        out.push(p(run(""), { rule: true, after: 160 }));
+        return out;
       }
-      return String(r.value).split("\n").map((l) => p(run(l)));
+      const lines = String(r.value).split("\n");
+      return lines.map((l, i) => p(run(l), { after: i === lines.length - 1 ? 160 : 40, rule: i === lines.length - 1 }));
     };
+    const band = (num, title, fill) => p([run(` ${num}   `, { bold: true, size: 26, color: fill === INK ? ACC : "FFFFFF" }),
+      run(title.toUpperCase() + " ", { bold: true, size: 22, color: "FFFFFF" })], { fill, before: 320, after: 200, line: 360, keepNext: true });
 
-    const head = [
-      p([run("ДЕЛА ", { bold: true, size: 22 }), run("полетели", { italics: true, bold: true, size: 22, color: ACC })], { after: 240 }),
-      p(run(m.kicker.toUpperCase(), { size: 16, color: MUTED, bold: true }), { after: 40 }),
-      p(run(m.title, { bold: true, size: 48 }), { after: 200 }),
-      new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [new TableRow({ children: m.meta.map(([k, v]) =>
-        tcell([p(run(k.toUpperCase(), { size: 14, color: MUTED, bold: true }), { after: 20 }), p(run(v || "—", { bold: true }))], { fill: PAPER, border: nb, w: Math.floor(100 / m.meta.length) })) })] }),
-      p(run(""), { after: 120 }),
+    const children = [
+      p([run("ДЕЛА ", { bold: true, size: 24 }), run("полетели", { italics: true, bold: true, size: 24, color: ACC })], { after: 280 }),
+      p(run(m.kicker.toUpperCase(), { size: 16, color: MUTED, bold: true }), { after: 60 }),
+      p(run(m.title, { bold: true, size: 40 }), { after: 200, line: 400 }),
+      ...m.meta.map(([k, v]) => p([run(k + ":  ", { color: MUTED, size: 20 }), run(v || "—", { bold: true })], { after: 40, fill: PAPER })),
+      ...m.sections.flatMap((s) => [band(s.num, s.title, INK),
+        ...s.rows.flatMap((r) => [p(run(r.label, { bold: true, size: 20, color: MUTED }), { after: 60, keepNext: true }), ...answer(r)])]),
+      band("✓", m.gapsTitle || "Что уточнить у клиента", ACC),
+      ...(m.gaps.length ? m.gaps.map((g) => p([run("☐  ", { color: ACC }), run(g)], { after: 60 })) : [p(run("Все обязательные поля заполнены."))]),
+      p(run(m.footer, { size: 16, color: MUTED }), { before: 360 }),
     ];
-    const band = (num, title, fill) => new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [new TableRow({ children: [
-      tcell([p([run(num + "   ", { bold: true, size: 26, color: fill === INK ? ACC : "FFFFFF" }), run(title.toUpperCase(), { bold: true, size: 22, color: "FFFFFF" })], { after: 0 })], { fill, border: nb })] })] });
-    const body = m.sections.flatMap((s) => [
-      p(run(""), { before: 160, after: 0 }),
-      band(s.num, s.title, INK),
-      new Table({ width: { size: 9900, type: WidthType.DXA }, columnWidths: [3300, 6600], rows: s.rows.map((r) => new TableRow({ cantSplit: true, children: [
-        tcell([p(run(r.label, { size: 18, color: MUTED, bold: true }))], { dxa: 3300, fill: PAPER }),
-        tcell(answer(r), { dxa: 6600 })] })) }),
-    ]);
-    const gaps = [p(run(""), { before: 160, after: 0 }), band("✓", "Что уточнить у клиента", ACC), p(run(""), { after: 60 }),
-      ...(m.gaps.length ? m.gaps.map((g) => p([run("☐  ", { color: ACC }), run(g)])) : [p(run("Все обязательные поля заполнены."))]),
-      p(run(m.footer, { size: 16, color: MUTED }), { before: 300 })];
     const doc = new Document({ creator: "Дела полетели", title: m.title,
-      styles: { default: { document: { run: { font: F, size: 20 } } } },
-      sections: [{ properties: { page: { margin: { top: 1000, bottom: 1000, left: 1000, right: 1000 } } }, children: [...head, ...body, ...gaps] }] });
+      styles: { default: { document: { run: { font: F, size: 22 } } } },
+      sections: [{ properties: { page: { margin: { top: 900, bottom: 900, left: 900, right: 900 } } }, children }] });
     return Packer.toBlob(doc);
   }
 
@@ -439,6 +434,7 @@ textarea { min-height: 120px; resize: vertical; line-height: 1.45; }
   // Клиентская ссылка без сервера: …#agent — сразу нужный бриф, без экрана студии
   const CLIENT = DEMO ? (location.hash || "").replace("#", "") : "";
   const STANDALONE = !!(DEMO && DEMO.standalone); // отдельный сайт (GitHub Pages): без диктовки claude.ai
+  const FOR_CLIENT = !!CLIENT || STANDALONE; // публичный сайт: клиентские экраны всегда
   const api = (p) => `/api/${p}/${token}`;
   const LS = `dela_brief_${token}`;
   const MAX_REC_SEC = 15 * 60;
@@ -876,12 +872,12 @@ textarea { min-height: 120px; resize: vertical; line-height: 1.45; }
         T.promise ? h("div", { class: "promise" }, h("p", { class: "promise__t", text: "Что вы получите после брифа" }),
           h("div", { class: "promise__row" }, ...T.promise.map((x) => h("div", { class: "promise__i" }, h("b", { text: x.big }), h("span", { text: x.text }))))) : null,
         h("p", { class: "lead", text: T.intro || "" }),
-        DEMO && !CLIENT ? h("p", { class: "demo", text: "Демо-версия для проверки анкеты. Как хранятся данные — ниже." }) : null,
-        CLIENT ? h("p", { class: "demo", text: "В конце вы скачаете готовый документ с ответами и отправите его нам. Пока вы заполняете, ответы сохраняются в этом браузере." }) : null),
+        DEMO && !FOR_CLIENT ? h("p", { class: "demo", text: "Демо-версия для проверки анкеты. Как хранятся данные — ниже." }) : null,
+        FOR_CLIENT ? h("p", { class: "demo", text: "В конце вы скачаете готовый документ с ответами и отправите его нам. Пока вы заполняете, ответы сохраняются в этом браузере." }) : null),
       route(false),
       h("section", { class: "safe" },
-        h("h2", { class: "safe__t", text: CLIENT ? "Ваши данные под защитой" : DEMO ? "Где хранятся ответы в демо" : "Ваши данные остаются у нас" }),
-        h("ul", { class: "safe__list" }, ...(CLIENT ? [
+        h("h2", { class: "safe__t", text: FOR_CLIENT ? "Ваши данные под защитой" : DEMO ? "Где хранятся ответы в демо" : "Ваши данные остаются у нас" }),
+        h("ul", { class: "safe__list" }, ...(FOR_CLIENT ? [
           h("li", {}, h("b", { text: "Ответы остаются у вас." }), " Пока вы заполняете, они хранятся только в этом браузере и никуда не отправляются автоматически."),
           h("li", {}, h("b", { text: "Вы сами решаете, что отправить." }), " В конце скачаете документ и пришлёте его нам."),
           h("li", {}, h("b", { text: "У нас — только у студии." }), " Документ не передаём подрядчикам, рекламным системам и внешним сервисам."),
@@ -947,7 +943,7 @@ textarea { min-height: 120px; resize: vertical; line-height: 1.45; }
       h("h1", { text: missing ? "Почти всё" : "Всё на месте" }),
       h("p", { class: "hero__sub", text: missing ? `Не хватает ${missing} ${plural(missing, "обязательного ответа", "обязательных ответов", "обязательных ответов")}. Можно отправить и так — уточним при звонке, — но лучше дополнить сейчас. Нажмите на раздел, чтобы вернуться.` : "Все обязательные ответы заполнены. Можно отправлять." })),
       route(true));
-    nav(() => go(step - 1), CLIENT ? "Готово — получить документ" : "Отправить бриф", async () => {
+    nav(() => go(step - 1), FOR_CLIENT ? "Готово — получить документ" : "Отправить бриф", async () => {
       navMain.disabled = true; navMain.textContent = "Отправляем…";
       const ok = await push("submit");
       if (ok) { S.status = "submitted"; done(); } else { navMain.disabled = false; navMain.textContent = "Отправить ещё раз"; toast("Нет связи с сервером. Ответы сохранены на этом устройстве — попробуйте чуть позже."); }
@@ -984,7 +980,8 @@ textarea { min-height: 120px; resize: vertical; line-height: 1.45; }
     const d = new Date(); const date = `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
     return { kicker: "Студия «Дела полетели» · бриф клиента", title: A().company_name ? `${T.title}: ${A().company_name}` : T.title,
       meta: [["Компания", A().company_name || ""], ["Контакт", A().contact || ""], ["Вид работ", T.short || T.title], ["Дата", date]],
-      sections, gaps, footer: `Собрано из онлайн-брифа ${date}. Голосовые ответы — в расшифровке.` };
+      sections, gaps, gapsTitle: FOR_CLIENT ? "Осталось без ответа" : "Что уточнить у клиента",
+      footer: FOR_CLIENT ? `Бриф заполнен ${date} на сайте студии «Дела полетели».` : `Собрано из онлайн-брифа ${date}. Голосовые ответы — в расшифровке.` };
   }
 
   let DL = null; // downloads claude.ai (только в DEMO)
@@ -999,39 +996,41 @@ textarea { min-height: 120px; resize: vertical; line-height: 1.45; }
   function switcher() { // демо: в шапке всегда можно вернуться к выбору брифа
     let b = document.getElementById("switch");
     if (!b) { b = h("button", { id: "switch", class: "switch", type: "button", onclick: () => { if (active) active.stop(); picker(); window.scrollTo(0, 0); } }); (document.querySelector(".top__right") || document.querySelector(".top")).append(b); }
-    b.textContent = S.segment ? `${(FULL.segments[S.segment] || {}).short || "Бриф"} · сменить` : "Выбрать бриф";
+    b.textContent = STANDALONE ? "Сменить бриф" : S.segment ? `${(FULL.segments[S.segment] || {}).short || "Бриф"} · сменить` : "Выбрать бриф";
   }
   function picker() { // экран студии: какой бриф отправить клиенту
     document.querySelector(".nav")?.remove();
     setTimeout(switcher, 0);
     app.replaceChildren(h("section", { class: "hero hero--short" },
-      h("p", { class: "hero__eyebrow", text: "Экран студии · клиент его не видит" }),
-      h("h1", { text: "Какой бриф отправить клиенту?" }),
-      h("p", { class: "hero__sub", text: "Клиенту отправляйте ссылку на эту страницу с пометкой брифа в конце, например …#agent: он сразу попадёт в свой бриф, без этого экрана." })),
+      h("p", { class: "hero__eyebrow", text: STANDALONE ? "Студия «Дела полетели»" : "Экран студии · клиент его не видит" }),
+      h("h1", { text: STANDALONE ? "Какой бриф вам нужен?" : "Какой бриф отправить клиенту?" }),
+      h("p", { class: "hero__sub", text: STANDALONE ? "Выберите, что хотите заказать, — покажем только нужные вопросы." : "Клиенту отправляйте ссылку на эту страницу с пометкой брифа в конце, например …#agent: он сразу попадёт в свой бриф, без этого экрана." })),
       h("div", { class: "segs" }, ...Object.entries(FULL.segments).map(([k, v]) => {
         const qs = segTemplate(FULL, k).sections.flatMap((s2) => s2.questions); const n = qs.length; const r = qs.filter((q) => q.required).length;
         const idx = Object.keys(FULL.segments).indexOf(k) + 1;
         return h("button", { type: "button", class: "segcard", onclick: () => {
           if (S.segment !== k) { S.answers = {}; S.consent = null; }
           S.segment = k; T = segTemplate(FULL, k); save(true); step = -1; render(); switcher(); window.scrollTo(0, 0);
-        } }, h("span", { class: "segcard__n", text: `ДП-${pad(idx)}` }), h("b", { text: v.title }), h("span", { text: v.subtitle }), h("i", {}, `${v.minutes} мин`, h("br"), `${r} главных из ${n}`, h("br"), h("code", { class: "segcard__hash", text: `#${k}` })));
+        } }, h("span", { class: "segcard__n", text: `ДП-${pad(idx)}` }), h("b", { text: v.title }), h("span", { text: v.subtitle }), h("i", {}, `${v.minutes} мин`, h("br"), `${r} главных из ${n}`, STANDALONE ? null : h("br"), STANDALONE ? null : h("code", { class: "segcard__hash", text: `#${k}` })));
       })));
   }
   if (DEMO) window.BriefDemoModel = () => docModel(); // для проверки сборки документа
-  function modelText(m) { // ответы простым текстом — для мессенджера
-    const L = [m.title, ...m.meta.map(([k, v]) => `${k}: ${v || "—"}`), ""];
+  function modelText(m) { // ответы простым текстом — для мессенджера: вопрос, под ним ответ
+    const L = [m.title.toUpperCase(), ...m.meta.filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`), ""];
     for (const sec of m.sections) {
-      L.push(`${sec.num}. ${sec.title.toUpperCase()}`);
+      L.push(`━━ ${sec.num}. ${sec.title.toUpperCase()} ━━`, "");
       for (const r of sec.rows) {
-        const v = r.kind === "missing" ? "—" : r.kind === "choice" ? r.value.join(", ")
-          : r.kind === "table" ? "\n" + r.rows.map((row) => "  • " + row.map((c, i) => `${r.columns[i]}: ${c || "—"}`).join("; ")).join("\n") + (r.note ? `\n  ${r.note}` : "")
-          : r.value;
-        L.push(`— ${r.label}: ${v}`);
+        L.push(`▸ ${r.label}`);
+        if (r.kind === "missing") L.push("  — не заполнено");
+        else if (r.kind === "choice") r.value.forEach((v) => L.push(`  ✓ ${v}`));
+        else if (r.kind === "table") { r.rows.forEach((row) => L.push("  • " + row.map((c, i) => `${r.columns[i]}: ${c || "—"}`).join(" · "))); if (r.note) L.push(`  ${r.note}`); }
+        else String(r.value).split("\n").forEach((l) => L.push(`  ${l}`));
+        L.push("");
       }
-      L.push("");
     }
     return L.join("\n");
   }
+
   function done() {
     document.querySelector(".nav")?.remove();
     if (DEMO) {
@@ -1058,13 +1057,28 @@ textarea { min-height: 120px; resize: vertical; line-height: 1.45; }
         navigator.clipboard.writeText(txt).then(() => { b.textContent = "Скопировано — вставьте в сообщение"; },
           () => { toast("Не удалось скопировать. Скачайте документ или выделите текст ниже."); });
       } });
-      if (CLIENT) {
+      if (FOR_CLIENT) {
+        // меню «Поделиться» телефона: файл собираем заранее, иначе браузер не даст открыть меню
+        const shareBtn = h("button", { class: "btn btn--accent", type: "button", text: "Отправить в Telegram / WhatsApp", hidden: true });
+        let shareFile = null;
+        if (navigator.canShare && window.docx) {
+          window.BriefDoc.docx(m).then((blob) => {
+            const f = new File([blob], fname, { type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+            if (navigator.canShare({ files: [f] })) { shareFile = f; shareBtn.hidden = false; }
+          }).catch(() => {});
+        }
+        shareBtn.addEventListener("click", () => {
+          if (!shareFile) return;
+          navigator.share({ files: [shareFile], title: m.title, text: m.title }).then(() => { shareBtn.textContent = "Отправлено"; })
+            .catch((er) => { if (er && er.name !== "AbortError") toast("Не получилось открыть меню отправки. Скачайте документ и отправьте его вручную."); });
+        });
+        if (dlBtn) dlBtn.className = "btn";
         app.replaceChildren(h("section", { class: "hero hero--short" },
           h("p", { class: "hero__eyebrow", text: "Бриф заполнен" }),
           h("h1", { text: "Осталось отправить нам" }),
-          h("p", { class: "hero__sub", text: "Скачайте документ или скопируйте ответы и пришлите вашему менеджеру в Telegram или на почту." }),
+          h("p", { class: "hero__sub", text: "Отправьте документ вашему менеджеру в Telegram, WhatsApp или на почту. Ниже — как он выглядит." }),
           T.contacts ? h("p", { class: "demo", text: T.contacts }) : null,
-          h("div", { class: "done__btns" }, dlBtn, copyBtn, h("button", { class: "btn", type: "button", text: "Вернуться к ответам", onclick: () => go(0) }))),
+          h("div", { class: "done__btns" }, shareBtn, dlBtn, copyBtn, h("button", { class: "btn", type: "button", text: "Вернуться к ответам", onclick: () => go(0) }))),
           wrap);
         return;
       }
